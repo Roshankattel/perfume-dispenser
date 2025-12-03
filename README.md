@@ -71,17 +71,17 @@ A2  ────────────────► Relay 3
 A3  ────────────────► Relay 4
 12  ────────────────► Relay 5
 
-3   ───[220Ω]───► LED 1 ───► GND
-5   ───[220Ω]───► LED 2 ───► GND
-7   ───[220Ω]───► LED 3 ───► GND
-9   ───[220Ω]───► LED 4 ───► GND
-11  ───[220Ω]───► LED 5 ───► GND
+3   ──────► LED 1 ───► GND
+5   ──────► LED 2 ───► GND
+7   ──────► LED 3 ───► GND
+9   ──────► LED 4 ───► GND
+11  ──────► LED 5 ───► GND
 
-2   ───[10kΩ]───► Button 1 ───► GND
-4   ───[10kΩ]───► Button 2 ───► GND
-6   ───[10kΩ]───► Button 3 ───► GND
-8   ───[10kΩ]───► Button 4 ───► GND
-10  ───[10kΩ]───► Button 5 ───► GND
+2   ──────► Button 1 ───► GND
+4   ──────► Button 2 ───► GND
+6   ──────► Button 3 ───► GND
+8   ──────► Button 4 ───► GND
+10  ──────► Button 5 ───► GND
 
 A5  ────────────────► Payment Gateway TX
 A4  ────────────────► Payment Gateway RX
