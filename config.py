@@ -21,8 +21,8 @@ BUTTON_PINS = [13, 21, 16, 7, 24]  # GPIO pins for 5 buttons
 
 # TTL Serial Configuration for Payment Gateway (MDB Protocol)
 # Raspberry Pi UART pins: GPIO 14 (TX), GPIO 15 (RX)
-# For USB-to-TTL adapter, specify the device path (e.g., '/dev/ttyUSB0' or '/dev/ttyAMA0')
-TTL_SERIAL_PORT = '/dev/ttyAMA0'  # Default UART on Raspberry Pi
+# For USB-to-TTL adapter, specify the device path 
+TTL_SERIAL_PORT = '/dev/serial0'  # Default UART on Raspberry Pi
 TTL_BAUD_RATE = 9600  # MDB protocol baud rate
 
 # System Constants
