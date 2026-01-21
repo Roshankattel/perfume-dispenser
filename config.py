@@ -9,15 +9,15 @@ All pin assignments are configurable here
 
 # Relay Pins (Output) - Control dispenser pumps/valves
 # Set to HIGH to activate relay
-RELAY_PINS = [18, 23, 24, 25, 12]  # GPIO pins for 5 relays
+RELAY_PINS = [4, 17, 27, 22, 5]  # GPIO pins for 5 relays
 
 # LED Pins (Output) - Visual indicators for each dispenser
 # Set to HIGH to turn LED on
-LED_PINS = [5, 6, 13, 19, 26]  # GPIO pins for 5 LEDs
+LED_PINS = [26, 20, 8, 25, 23]  # GPIO pins for 5 LEDs
 
 # Button Pins (Input with Pull-up) - Item selection buttons
 # Reads LOW when pressed (active LOW)
-BUTTON_PINS = [2, 3, 4, 17, 27]  # GPIO pins for 5 buttons
+BUTTON_PINS = [13, 21, 16, 7, 24]  # GPIO pins for 5 buttons
 
 # TTL Serial Configuration for Payment Gateway (MDB Protocol)
 # Raspberry Pi UART pins: GPIO 14 (TX), GPIO 15 (RX)
