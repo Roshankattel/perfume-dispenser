@@ -10,7 +10,7 @@ The easiest way is to use the provided installation script.
 
 1. **Navigate to the project directory**:
    ```bash
-   cd ~/arduino-perfume-dispenser
+   cd ~/perfume-dispenser
    ```
 
 2. **Run the installation script**:
@@ -46,8 +46,8 @@ If you prefer to install manually:
    Update these lines with your actual paths:
    ```ini
    User=pi                                    # Your username
-   WorkingDirectory=/home/pi/arduino-perfume-dispenser  # Your project path
-   ExecStart=/usr/bin/python3 /home/pi/arduino-perfume-dispenser/perfume_dispenser.py
+   WorkingDirectory=/home/pi/perfume-dispenser  # Your project path
+   ExecStart=/usr/bin/python3 /home/pi/perfume-dispenser/perfume_dispenser.py
    ```
 
 3. **Reload systemd and enable the service**:
@@ -99,7 +99,7 @@ If you prefer a simpler approach without systemd:
 
 2. **Add this line before `exit 0`**:
    ```bash
-   su - pi -c "cd /home/pi/arduino-perfume-dispenser && /usr/bin/python3 perfume_dispenser.py &"
+   su - pi -c "cd /home/pi/perfume-dispenser && /usr/bin/python3 perfume_dispenser.py &"
    ```
 
 3. **Make sure the file ends with `exit 0`**
@@ -115,7 +115,7 @@ If you prefer a simpler approach without systemd:
 
 2. **Add this line**:
    ```cron
-   @reboot cd /home/pi/arduino-perfume-dispenser && /usr/bin/python3 perfume_dispenser.py
+   @reboot cd /home/pi/perfume-dispenser && /usr/bin/python3 perfume_dispenser.py
    ```
 
 **Note**: This method also doesn't provide automatic restart on failure.

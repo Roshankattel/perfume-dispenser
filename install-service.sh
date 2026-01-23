@@ -38,7 +38,7 @@ fi
 
 # Get the actual home directory
 ACTUAL_HOME=$(eval echo ~$ACTUAL_USER)
-PROJECT_DIR="$ACTUAL_HOME/arduino-perfume-dispenser"
+PROJECT_DIR="$ACTUAL_HOME/perfume-dispenser"
 
 # Check if project directory exists
 if [ ! -d "$PROJECT_DIR" ]; then
@@ -60,7 +60,7 @@ fi
 
 # Create a temporary service file with correct paths
 TEMP_SERVICE="/tmp/perfume-dispenser.service"
-sed "s|/home/pi/arduino-perfume-dispenser|$PROJECT_DIR|g; s|User=pi|User=$ACTUAL_USER|g" "$SERVICE_FILE" > "$TEMP_SERVICE"
+sed "s|/home/pi/perfume-dispenser|$PROJECT_DIR|g; s|User=pi|User=$ACTUAL_USER|g" "$SERVICE_FILE" > "$TEMP_SERVICE"
 
 # Copy service file to systemd directory
 echo "Installing service file..."
