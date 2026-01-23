@@ -1,0 +1,16 @@
+[Unit]
+Description=Perfume Dispenser System
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/arduino-perfume-dispenser
+ExecStart=/usr/bin/python3 /home/pi/arduino-perfume-dispenser/perfume_dispenser.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
