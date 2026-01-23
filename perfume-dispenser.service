@@ -5,8 +5,8 @@ After=network.target
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/arduino-perfume-dispenser
-ExecStart=/usr/bin/python3 /home/pi/arduino-perfume-dispenser/perfume_dispenser.py
+WorkingDirectory=/home/pi/perfume-dispenser
+ExecStart=/usr/bin/python3 /home/pi/perfume-dispenser/perfume_dispenser.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
