@@ -8,9 +8,14 @@ import RPi.GPIO as GPIO
 import serial
 import time
 import threading
+import sys
 from enum import Enum
 from typing import List, Optional
 import config
+
+# Force unbuffered output for systemd logging
+sys.stdout = sys.__stdout__
+sys.stderr = sys.__stderr__
 
 # MDB Protocol State Machine
 class MDBState(Enum):
@@ -100,11 +105,16 @@ class PerfumeDispenser:
         self.running = True
         self.serial_thread = None
         
-        print("Perfume Dispenser System initialized")
-        print(f"Relay pins: {self.relay_pins}")
-        print(f"LED pins: {self.led_pins}")
-        print(f"Button pins: {self.button_pins}")
-        print(f"Serial port: {config.TTL_SERIAL_PORT}")
+        # Initial startup logs - flush immediately for systemd
+        print("=" * 50, flush=True)
+        print("Perfume Dispenser System - Starting Up", flush=True)
+        print("=" * 50, flush=True)
+        print(f"Relay pins: {self.relay_pins}", flush=True)
+        print(f"LED pins: {self.led_pins}", flush=True)
+        print(f"Button pins: {self.button_pins}", flush=True)
+        print(f"Serial port: {config.TTL_SERIAL_PORT}", flush=True)
+        print(f"Baud rate: {config.TTL_BAUD_RATE}", flush=True)
+        print("=" * 50, flush=True)
     
     def _setup_gpio(self):
         """Configure all GPIO pins"""
@@ -537,10 +547,13 @@ class PerfumeDispenser:
     def run(self):
         """Main loop"""
         # Startup animation
+        print("Running startup LED animation...", flush=True)
         self.flash_all_leds()
         
-        print("Setup complete - System ready!")
-        print("Waiting for card tap...")
+        print("=" * 50, flush=True)
+        print("Setup complete - System ready!", flush=True)
+        print("Waiting for card tap...", flush=True)
+        print("=" * 50, flush=True)
         
         # Start serial reading thread
         self.serial_thread = threading.Thread(target=self._serial_reader_thread, daemon=True)
@@ -671,19 +684,28 @@ class PerfumeDispenser:
         
         # Cleanup GPIO
         GPIO.cleanup()
-        print("Cleanup complete")
+        print("Cleanup complete", flush=True)
 
 
 def main():
     """Main entry point"""
-    dispenser = PerfumeDispenser()
+    print("=" * 50, flush=True)
+    print("Perfume Dispenser System - Main Entry Point", flush=True)
+    print("=" * 50, flush=True)
+    
     try:
+        dispenser = PerfumeDispenser()
         dispenser.run()
+    except KeyboardInterrupt:
+        print("\nReceived keyboard interrupt - shutting down gracefully...", flush=True)
     except Exception as e:
-        print(f"Fatal error: {e}")
+        print(f"Fatal error: {e}", flush=True)
         import traceback
         traceback.print_exc()
-        dispenser.cleanup()
+        if 'dispenser' in locals():
+            dispenser.cleanup()
+    finally:
+        print("Perfume Dispenser System - Exiting", flush=True)
 
 
 if __name__ == "__main__":

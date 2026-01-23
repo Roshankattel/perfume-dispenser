@@ -6,11 +6,13 @@ After=network.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/perfume-dispenser
-ExecStart=/usr/bin/python3 /home/pi/perfume-dispenser/perfume_dispenser.py
+ExecStart=/usr/bin/python3 -u /home/pi/perfume-dispenser/perfume_dispenser.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
+# Force immediate output flushing
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
