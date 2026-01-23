@@ -1,0 +1,24 @@
+[Unit]
+Description=USB Video Player - Auto-play videos from USB stick
+After=multi-user.target graphical.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+User=pi
+# Wait a bit for USB to be mounted and display to be ready
+ExecStartPre=/bin/sleep 15
+ExecStart=/usr/bin/python3 -u /home/pi/perfume-dispenser/video_player.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+# Force immediate output flushing
+Environment=PYTHONUNBUFFERED=1
+# Set DISPLAY for X11 (if using desktop environment)
+Environment=DISPLAY=:0
+# For Raspberry Pi without desktop, use framebuffer
+Environment=SDL_VIDEODRIVER=fbdev
+
+[Install]
+WantedBy=multi-user.target
