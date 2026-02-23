@@ -1,6 +1,9 @@
 # Autostart Guide - Perfume Dispenser System
 
-This guide explains how to set up the Perfume Dispenser System to automatically start when your Raspberry Pi boots up.
+This guide explains how to set up the Perfume Dispenser System and the USB Video Player to automatically start when your Raspberry Pi boots up.
+
+- **Perfume Dispenser**: Payment and dispensing system (Methods 1–3 below)
+- **Video Player**: USB video playback in fullscreen (see Video Player Service section)
 
 ## Method 1: Using systemd Service (Recommended)
 
@@ -119,6 +122,105 @@ If you prefer a simpler approach without systemd:
    ```
 
 **Note**: This method also doesn't provide automatic restart on failure.
+
+---
+
+## Video Player Service (USB Video Playback)
+
+The video player automatically plays videos from a USB stick in fullscreen, in alphabetical order. It starts on boot, waits for the USB to be connected, and stops immediately if the USB is removed.
+
+### Quick Installation
+
+1. **Navigate to the project directory**:
+   ```bash
+   cd ~/perfume-dispenser
+   ```
+
+2. **Run the installation script**:
+   ```bash
+   sudo ./install-video-player.sh
+   ```
+
+   The script will:
+   - Check for a video player (mpv, omxplayer, or vlc)
+   - Offer to install mpv if none is found
+   - Create and enable the systemd service
+   - Optionally start the service immediately
+
+3. **Prepare your USB stick**:
+   - Create a folder named `video` on the USB stick
+   - Place your video files (.mp4, .avi, .mov, .mkv, etc.) in that folder
+   - Videos will play in **alphabetical order**
+
+### Behavior
+
+- **USB connected**: Detects USB, reads videos from the `video` folder, plays in alphabetical order in fullscreen loop
+- **USB removed**: Stops video immediately (no resume)
+- **USB reconnected**: Service restarts automatically and waits for USB; when connected, plays again
+
+### Manual Installation
+
+1. **Install a video player** (if not already installed):
+   ```bash
+   sudo apt-get update
+   sudo apt-get install mpv
+   ```
+
+2. **Copy the service file**:
+   ```bash
+   sudo cp video-player.service /etc/systemd/system/
+   ```
+
+3. **Edit the service file** to match your setup:
+   ```bash
+   sudo nano /etc/systemd/system/video-player.service
+   ```
+   
+   Update the path in `ExecStart`:
+   ```ini
+   ExecStart=/usr/bin/python3 -u /home/pi/perfume-dispenser/video_player.py
+   ```
+
+4. **Reload systemd and enable the service**:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable video-player.service
+   sudo systemctl start video-player.service
+   ```
+
+### Video Player Service Commands
+
+```bash
+# Check service status
+sudo systemctl status video-player
+
+# Start the service
+sudo systemctl start video-player
+
+# Stop the service
+sudo systemctl stop video-player
+
+# Restart the service
+sudo systemctl restart video-player
+
+# View live logs
+sudo journalctl -u video-player -f
+
+# View recent logs
+sudo journalctl -u video-player -n 50
+
+# Disable autostart
+sudo systemctl disable video-player
+```
+
+### Video Player Troubleshooting
+
+- **No video player found**: Install mpv with `sudo apt-get install mpv`
+- **USB not detected**: Ensure the USB has a `video` folder with video files; check mount point with `ls /media/pi/`
+- **Videos not playing**: Verify video format is supported (.mp4, .avi, .mov, .mkv, etc.)
+- **Display issues**: Ensure `DISPLAY=:0` is set if using a desktop environment
+
+---
 
 ## Troubleshooting
 
