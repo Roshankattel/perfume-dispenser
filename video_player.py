@@ -9,7 +9,6 @@ import sys
 import time
 import subprocess
 import glob
-from pathlib import Path
 
 # Force unbuffered output for systemd logging
 sys.stdout = sys.__stdout__
@@ -135,86 +134,112 @@ def verify_videos_exist(video_files):
     return [v for v in video_files if os.path.exists(v)]
 
 
+def run_with_usb_monitor(proc, usb_path):
+    """
+    Poll a running Popen process and monitor for USB removal every 2 seconds.
+    Returns the exit code if the process ends normally.
+    Calls sys.exit(0) immediately if USB is removed.
+    """
+    while True:
+        ret = proc.poll()
+        if ret is not None:
+            return ret
+        if not os.path.exists(usb_path):
+            print("USB removed - stopping video immediately.", flush=True)
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            sys.exit(0)
+        time.sleep(2)
+
+
 def play_videos(video_files, player_cmd, usb_path):
     """Play videos in loop"""
     if not video_files:
         print("No video files found!", flush=True)
         return False
-    
+
     print(f"Found {len(video_files)} video file(s):", flush=True)
     for i, video in enumerate(video_files, 1):
         print(f"  {i}. {os.path.basename(video)}", flush=True)
     print("=" * 50, flush=True)
-    
+
     print(f"Starting video playback with {player_cmd}...", flush=True)
-    print("Press Ctrl+C to stop", flush=True)
     print("=" * 50, flush=True)
-    
+
     try:
         if player_cmd == 'mpv':
-            # mpv: play all videos as a playlist and loop infinitely
-            # Use --loop-playlist=inf to loop through all videos continuously
+            # Single mpv process plays entire playlist seamlessly - no window gaps
             while True:
-                # Verify videos still exist (USB might have been removed)
                 valid_videos = verify_videos_exist(video_files)
                 if not valid_videos:
-                    print("USB removed or videos no longer accessible. Waiting for USB...", flush=True)
-                    return False
-                
-                # Check if USB is still mounted
-                if not os.path.exists(usb_path):
-                    print("USB removed. Waiting for reinsertion...", flush=True)
-                    return False
-                
-                cmd = ['mpv', '--fullscreen', '--loop-playlist=inf', '--no-audio', 
+                    print("Videos no longer accessible.", flush=True)
+                    sys.exit(0)
+                cmd = ['mpv', '--fullscreen', '--loop-playlist=inf', '--no-audio',
                        '--no-input-default-bindings', '--really-quiet',
                        '--osd-level=0'] + valid_videos
-                print(f"Starting playlist with {len(valid_videos)} video(s)...", flush=True)
-                result = subprocess.run(cmd, timeout=None)
-                if result.returncode != 0:
-                    print(f"Player exited with code {result.returncode}, restarting...", flush=True)
-                    time.sleep(2)
-        else:
-            # For omxplayer and vlc: manually loop through all videos
+                print(f"Starting playlist ({len(valid_videos)} video(s))...", flush=True)
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                run_with_usb_monitor(proc, usb_path)
+                # mpv exited (shouldn't with loop-playlist=inf) - restart
+                print("Player exited unexpectedly, restarting...", flush=True)
+                time.sleep(2)
+
+        elif player_cmd == 'vlc':
+            # Single VLC process plays entire playlist seamlessly - no window gaps, no black box
+            # --loop keeps cycling through all passed files; one window stays open throughout
             while True:
-                # Verify videos still exist (USB might have been removed)
                 valid_videos = verify_videos_exist(video_files)
                 if not valid_videos:
-                    print("USB removed or videos no longer accessible. Waiting for USB...", flush=True)
-                    return False
-                
-                # Play each video in sequence
+                    print("Videos no longer accessible.", flush=True)
+                    sys.exit(0)
+                cmd = ['vlc', '--fullscreen', '--loop', '--no-audio',
+                       '--no-video-title-show', '--no-osd',
+                       '--no-qt-system-tray', '--no-qt-error-dialogs',
+                       '--quiet'] + valid_videos
+                print(f"Starting VLC playlist ({len(valid_videos)} video(s))...", flush=True)
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                run_with_usb_monitor(proc, usb_path)
+                # VLC exited - restart
+                print("Player exited unexpectedly, restarting...", flush=True)
+                time.sleep(2)
+
+        elif player_cmd == 'omxplayer':
+            # omxplayer cannot play playlists - spawn per video.
+            # A fullscreen black root window prevents desktop flash between clips.
+            try:
+                subprocess.run(['xsetroot', '-solid', 'black'],
+                               capture_output=True, timeout=2)
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+            while True:
+                valid_videos = verify_videos_exist(video_files)
+                if not valid_videos:
+                    print("Videos no longer accessible.", flush=True)
+                    sys.exit(0)
                 for video in valid_videos:
-                    # Check if USB is still mounted before each video
                     if not os.path.exists(usb_path):
-                        print("USB removed. Waiting for reinsertion...", flush=True)
-                        return False
-                    
-                    if not os.path.exists(video):
-                        print(f"Video file no longer exists: {video}", flush=True)
-                        return False
-                    
-                    if player_cmd == 'omxplayer':
-                        cmd = ['omxplayer', '-b', '--no-osd', video]
-                    elif player_cmd == 'vlc':
-                        cmd = ['vlc', '--fullscreen', '--no-audio', '--intf', 'dummy', 
-                               '--play-and-exit', '--no-video-title-show', video]
-                    else:
-                        print(f"Unknown player: {player_cmd}", flush=True)
-                        return False
-                    
+                        print("USB removed - stopping.", flush=True)
+                        sys.exit(0)
                     print(f"Playing: {os.path.basename(video)}", flush=True)
-                    result = subprocess.run(cmd, timeout=None)
-                    if result.returncode != 0:
-                        print(f"Error playing {video} (code: {result.returncode})", flush=True)
-                        time.sleep(1)
-                
-                # After playing all videos, loop back to the beginning
-                print("Finished playlist, looping...", flush=True)
-            
+                    proc = subprocess.Popen(
+                        ['omxplayer', '-b', '--no-osd', video],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    )
+                    run_with_usb_monitor(proc, usb_path)
+                print("Playlist finished, looping...", flush=True)
+
+        else:
+            print(f"Unknown player: {player_cmd}", flush=True)
+            return False
+
     except KeyboardInterrupt:
         print("\nStopping video playback...", flush=True)
         return True
+    except SystemExit:
+        raise
     except Exception as e:
         print(f"Error during playback: {e}", flush=True)
         import traceback
