@@ -167,7 +167,8 @@ def play_videos(video_files, player_cmd, usb_path):
                     return False
                 
                 cmd = ['mpv', '--fullscreen', '--loop-playlist=inf', '--no-audio', 
-                       '--no-input-default-bindings', '--really-quiet'] + valid_videos
+                       '--no-input-default-bindings', '--really-quiet',
+                       '--osd-level=0'] + valid_videos
                 print(f"Starting playlist with {len(valid_videos)} video(s)...", flush=True)
                 result = subprocess.run(cmd, timeout=None)
                 if result.returncode != 0:
@@ -197,7 +198,7 @@ def play_videos(video_files, player_cmd, usb_path):
                         cmd = ['omxplayer', '-b', '--no-osd', video]
                     elif player_cmd == 'vlc':
                         cmd = ['vlc', '--fullscreen', '--no-audio', '--intf', 'dummy', 
-                               '--play-and-exit', video]
+                               '--play-and-exit', '--no-video-title-show', video]
                     else:
                         print(f"Unknown player: {player_cmd}", flush=True)
                         return False
