@@ -18,8 +18,13 @@ sys.stderr = sys.__stderr__
 USB_MOUNT_POINTS = ['/media/pi', '/media', '/mnt/usb', '/mnt']
 VIDEO_FOLDER_NAME = 'video'
 VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv', '.m4v', '.wmv', '.flv', '.webm']
-CHECK_INTERVAL = 5  # Check for USB every 5 seconds
-MAX_WAIT_TIME = 300  # Maximum time to wait for USB (5 minutes)
+CHECK_INTERVAL = 5       # Seconds between USB-present checks
+MAX_WAIT_TIME = 300      # Max seconds to wait for USB on startup
+
+# Watchdog — how long to let the player run before assuming it is frozen.
+# Set to total playlist duration + this buffer. Restart is silent and seamless.
+WATCHDOG_BUFFER_SECONDS = 120   # 2-minute grace period on top of expected duration
+DEFAULT_VIDEO_DURATION  = 600   # Fallback if ffprobe is unavailable (10 min)
 
 
 def find_usb_mount_point():
@@ -134,16 +139,47 @@ def verify_videos_exist(video_files):
     return [v for v in video_files if os.path.exists(v)]
 
 
-def run_with_usb_monitor(proc, usb_path):
+def get_video_duration(video_path):
+    """Return video duration in seconds via ffprobe, or DEFAULT_VIDEO_DURATION if unavailable."""
+    try:
+        result = subprocess.run(
+            ['ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
+             '-of', 'csv=p=0', video_path],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except Exception:
+        pass
+    return DEFAULT_VIDEO_DURATION
+
+
+def get_total_playlist_duration(video_files):
+    """Probe each video and return the summed duration for watchdog calculation."""
+    print("Probing video durations for watchdog timer...", flush=True)
+    total = 0
+    for video in video_files:
+        dur = get_video_duration(video)
+        total += dur
+        print(f"  {os.path.basename(video)}: {dur:.0f}s ({dur / 60:.1f} min)", flush=True)
+    print(f"Total playlist: {total:.0f}s ({total / 60:.1f} min) — "
+          f"watchdog fires at {(total + WATCHDOG_BUFFER_SECONDS):.0f}s", flush=True)
+    return total
+
+
+def run_with_usb_monitor(proc, usb_path, watchdog_timeout=None):
     """
-    Poll a running Popen process and monitor for USB removal every 2 seconds.
-    Returns the exit code if the process ends normally.
-    Calls sys.exit(0) immediately if USB is removed.
+    Poll a Popen process every 2 seconds.
+    - USB removed  → kill player, sys.exit(0)
+    - watchdog_timeout exceeded → kill player, return 'watchdog'  (caller restarts)
+    - Process exits normally    → return its exit code
     """
+    start = time.time()
     while True:
         ret = proc.poll()
         if ret is not None:
             return ret
+
         if not os.path.exists(usb_path):
             print("USB removed - stopping video immediately.", flush=True)
             proc.terminate()
@@ -152,6 +188,20 @@ def run_with_usb_monitor(proc, usb_path):
             except subprocess.TimeoutExpired:
                 proc.kill()
             sys.exit(0)
+
+        if watchdog_timeout is not None:
+            elapsed = time.time() - start
+            if elapsed > watchdog_timeout:
+                print(f"Watchdog: player has been running {elapsed:.0f}s "
+                      f"(limit {watchdog_timeout:.0f}s) — appears stuck, restarting...",
+                      flush=True)
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                return 'watchdog'
+
         time.sleep(2)
 
 
@@ -171,7 +221,9 @@ def play_videos(video_files, player_cmd, usb_path):
 
     try:
         if player_cmd == 'mpv':
-            # Single mpv process plays entire playlist seamlessly - no window gaps
+            # Single mpv process plays the entire playlist; watchdog restarts if frozen
+            total_duration = get_total_playlist_duration(video_files)
+            watchdog_timeout = total_duration + WATCHDOG_BUFFER_SECONDS
             while True:
                 valid_videos = verify_videos_exist(video_files)
                 if not valid_videos:
@@ -180,16 +232,18 @@ def play_videos(video_files, player_cmd, usb_path):
                 cmd = ['mpv', '--fullscreen', '--loop-playlist=inf', '--no-audio',
                        '--no-input-default-bindings', '--really-quiet',
                        '--osd-level=0'] + valid_videos
-                print(f"Starting playlist ({len(valid_videos)} video(s))...", flush=True)
+                print(f"Starting mpv playlist ({len(valid_videos)} video(s), "
+                      f"watchdog: {watchdog_timeout:.0f}s)...", flush=True)
                 proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                run_with_usb_monitor(proc, usb_path)
-                # mpv exited (shouldn't with loop-playlist=inf) - restart
-                print("Player exited unexpectedly, restarting...", flush=True)
+                run_with_usb_monitor(proc, usb_path, watchdog_timeout=watchdog_timeout)
+                print("Restarting mpv (exited or watchdog)...", flush=True)
                 time.sleep(2)
 
         elif player_cmd == 'vlc':
-            # Single VLC process plays entire playlist seamlessly - no window gaps, no black box
-            # --loop keeps cycling through all passed files; one window stays open throughout
+            # Single VLC process — one window, no gaps between videos.
+            # Watchdog kills and restarts VLC if it freezes on a specific video.
+            total_duration = get_total_playlist_duration(video_files)
+            watchdog_timeout = total_duration + WATCHDOG_BUFFER_SECONDS
             while True:
                 valid_videos = verify_videos_exist(video_files)
                 if not valid_videos:
@@ -198,17 +252,18 @@ def play_videos(video_files, player_cmd, usb_path):
                 cmd = ['vlc', '--fullscreen', '--loop', '--no-audio',
                        '--no-video-title-show', '--no-osd',
                        '--no-qt-system-tray', '--no-qt-error-dialogs',
-                       '--quiet'] + valid_videos
-                print(f"Starting VLC playlist ({len(valid_videos)} video(s))...", flush=True)
+                       '--file-caching=5000',   # 5-second read buffer from USB
+                       '--no-stats'] + valid_videos
+                print(f"Starting VLC playlist ({len(valid_videos)} video(s), "
+                      f"watchdog: {watchdog_timeout:.0f}s)...", flush=True)
                 proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                run_with_usb_monitor(proc, usb_path)
-                # VLC exited - restart
-                print("Player exited unexpectedly, restarting...", flush=True)
+                run_with_usb_monitor(proc, usb_path, watchdog_timeout=watchdog_timeout)
+                print("Restarting VLC (exited or watchdog)...", flush=True)
                 time.sleep(2)
 
         elif player_cmd == 'omxplayer':
-            # omxplayer cannot play playlists - spawn per video.
-            # A fullscreen black root window prevents desktop flash between clips.
+            # omxplayer cannot play playlists — spawn per video.
+            # xsetroot paints the desktop black to hide the gap between clips.
             try:
                 subprocess.run(['xsetroot', '-solid', 'black'],
                                capture_output=True, timeout=2)
@@ -223,12 +278,15 @@ def play_videos(video_files, player_cmd, usb_path):
                     if not os.path.exists(usb_path):
                         print("USB removed - stopping.", flush=True)
                         sys.exit(0)
-                    print(f"Playing: {os.path.basename(video)}", flush=True)
+                    dur = get_video_duration(video)
+                    watchdog_timeout = dur + WATCHDOG_BUFFER_SECONDS
+                    print(f"Playing: {os.path.basename(video)} "
+                          f"(watchdog: {watchdog_timeout:.0f}s)", flush=True)
                     proc = subprocess.Popen(
                         ['omxplayer', '-b', '--no-osd', video],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                     )
-                    run_with_usb_monitor(proc, usb_path)
+                    run_with_usb_monitor(proc, usb_path, watchdog_timeout=watchdog_timeout)
                 print("Playlist finished, looping...", flush=True)
 
         else:
