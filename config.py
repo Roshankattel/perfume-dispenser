@@ -28,7 +28,7 @@ TTL_BAUD_RATE = 9600  # MDB protocol baud rate
 # System Constants
 ITEM_PRICE = 200  # Price in cents ($2.00)
 ITEM_SELECTION_TIMEOUT = 55000  # 55 seconds in milliseconds
-RELAY_DURATION = 2500  # 2.5 seconds in milliseconds
+RELAY_DURATION = 1200  # 1.2 seconds in milliseconds (Perfume dispensing time)
 POST_DISPENSE_DELAY = 2000  # 2 seconds in milliseconds
 FLASH_INTERVAL = 500  # 500ms LED flash interval
 NAYAX_TIMEOUT = 15000  # 15 seconds timeout for general operations
