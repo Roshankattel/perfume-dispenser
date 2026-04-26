@@ -1,214 +1,321 @@
-# Perfume Dispenser System
+# Autostart Guide - Perfume Dispenser System
 
-An Arduino-based vending machine system for dispensing perfumes with integrated card payment support via MDB (Multi-Drop Bus) protocol. The system supports 5 different perfume selections with visual LED indicators and button-based selection interface.
+This guide explains how to set up the Perfume Dispenser System and the USB Video Player to automatically start when your Raspberry Pi boots up.
 
-## Features
+- **Perfume Dispenser**: Payment and dispensing system (Methods 1–3 below)
+- **Video Player**: USB video playback in fullscreen (see Video Player Service section)
 
-- **5-Channel Dispensing System**: Control up to 5 different perfume dispensers
-- **Card Payment Integration**: Supports contactless card payments via Nayax payment gateway using MDB protocol
-- **Visual Feedback**: 
-  - All LEDs solid ON when idle (waiting for payment)
-  - LEDs flash when payment is approved (waiting for item selection)
-  - Individual LED indicates active dispenser during vending
-- **Button Selection Interface**: 5 buttons for selecting perfume items (only active after payment approval)
-- **Automatic Timeout Handling**: 
-  - 55 seconds timeout for item selection
-  - Automatic cancel vend if no selection is made
-  - 15 seconds timeout for other operations
-- **State Machine**: Robust state management for payment and vending flow
-- **Serial Debugging**: Comprehensive serial output for monitoring MDB communication
+## Method 1: Using systemd Service (Recommended)
 
-## Hardware Requirements
+The easiest way is to use the provided installation script.
 
-- **Arduino Uno** (or compatible)
-- **5x Relay Modules** (for controlling dispensers)
-- **5x LEDs** (for visual indicators)
-- **5x Push Buttons** (for item selection)
-- **Nayax Payment Gateway** (MDB protocol compatible)
-- **Resistors** (for LEDs and pull-up resistors for buttons)
-- **Power Supply** (appropriate for relays and Arduino)
+### Quick Installation
 
-## Pin Connections
+1. **Navigate to the project directory**:
+   ```bash
+   cd ~/perfume-dispenser
+   ```
 
-### Relay Pins (Output)
-Control the dispenser pumps/valves:
-- Relay 1: **A0**
-- Relay 2: **A1**
-- Relay 3: **A2**
-- Relay 4: **A3**
-- Relay 5: **12**
+2. **Run the installation script**:
+   ```bash
+   sudo ./install-service.sh
+   ```
 
-### LED Pins (Output)
-Visual indicators for each dispenser:
-- LED 1: **3**
-- LED 2: **5**
-- LED 3: **7**
-- LED 4: **9**
-- LED 5: **11**
+   The script will:
+   - Detect your project directory
+   - Create a systemd service file
+   - Enable the service to start on boot
+   - Configure it to run as your user
 
-### Button Pins (Input with Pull-up)
-Item selection buttons (active LOW):
-- Button 1: **2**
-- Button 2: **4**
-- Button 3: **6**
-- Button 4: **8**
-- Button 5: **10**
+3. **Start the service immediately** (optional):
+   ```bash
+   sudo systemctl start perfume-dispenser
+   ```
 
-### Payment Gateway Serial (SoftwareSerial)
-MDB protocol communication:
-- RX: **A5** (receives data from payment gateway)
-- TX: **A4** (sends data to payment gateway)
-- Baud Rate: **9600**
+### Manual Installation
 
-## Wiring Diagram
+If you prefer to install manually:
 
-```
-Arduino Uno                    External Components
------------                    -------------------
-A0  ────────────────► Relay 1
-A1  ────────────────► Relay 2
-A2  ────────────────► Relay 3
-A3  ────────────────► Relay 4
-12  ────────────────► Relay 5
+1. **Copy the service file**:
+   ```bash
+   sudo cp perfume-dispenser.service /etc/systemd/system/
+   ```
 
-3   ──────► LED 1 ───► GND
-5   ──────► LED 2 ───► GND
-7   ──────► LED 3 ───► GND
-9   ──────► LED 4 ───► GND
-11  ──────► LED 5 ───► GND
+2. **Edit the service file** to match your setup:
+   ```bash
+   sudo nano /etc/systemd/system/perfume-dispenser.service
+   ```
+   
+   Update these lines with your actual paths:
+   ```ini
+   User=pi                                    # Your username
+   WorkingDirectory=/home/pi/perfume-dispenser  # Your project path
+   ExecStart=/usr/bin/python3 /home/pi/perfume-dispenser/perfume_dispenser.py
+   ```
 
-2   ──────► Button 1 ───► GND
-4   ──────► Button 2 ───► GND
-6   ──────► Button 3 ───► GND
-8   ──────► Button 4 ───► GND
-10  ──────► Button 5 ───► GND
+3. **Reload systemd and enable the service**:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable perfume-dispenser.service
+   sudo systemctl start perfume-dispenser.service
+   ```
 
-A5  ────────────────► Payment Gateway TX
-A4  ────────────────► Payment Gateway RX
-GND ────────────────► Payment Gateway GND
-```
+### Service Management Commands
 
-**Note**: Buttons use internal pull-up resistors (INPUT_PULLUP), so they connect between the pin and GND. When pressed, the pin reads LOW.
+```bash
+# Check service status
+sudo systemctl status perfume-dispenser
 
-## Software Setup
+# Start the service
+sudo systemctl start perfume-dispenser
 
-### Required Libraries
+# Stop the service
+sudo systemctl stop perfume-dispenser
 
-Install the following Arduino libraries:
+# Restart the service
+sudo systemctl restart perfume-dispenser
 
-1. **Bounce2** - For button debouncing
-   - Install via Arduino Library Manager: `Bounce2` by Thomas O Fredericks
+# View live logs
+sudo journalctl -u perfume-dispenser -f
 
-2. **SoftwareSerial** - Built-in Arduino library (no installation needed)
+# View recent logs
+sudo journalctl -u perfume-dispenser -n 50
 
-### Configuration
+# Disable autostart (but keep service installed)
+sudo systemctl disable perfume-dispenser
 
-Key constants in the code that can be adjusted:
-
-```cpp
-const uint16_t ITEM_PRICE = 200;  // Price in cents ($2.00)
-const unsigned long ITEM_SELECTION_TIMEOUT = 55000;  // 55 seconds
-const unsigned long RELAY_DURATION = 3000;  // 3 seconds
-const unsigned long POST_DISPENSE_DELAY = 2000;  // 2 seconds
-const unsigned long FLASH_INTERVAL = 500;  // 500ms LED flash interval
+# Remove the service completely
+sudo systemctl stop perfume-dispenser
+sudo systemctl disable perfume-dispenser
+sudo rm /etc/systemd/system/perfume-dispenser.service
+sudo systemctl daemon-reload
 ```
 
-### Upload Instructions
+## Method 2: Using rc.local (Alternative)
 
-1. Connect Arduino Uno to your computer via USB
-2. Open `perfumeDespenser.ino` in Arduino IDE
-3. Select board: **Tools → Board → Arduino Uno**
-4. Select port: **Tools → Port → [Your Arduino Port]**
-5. Click **Upload** button
+If you prefer a simpler approach without systemd:
 
-## Operation Flow
+1. **Edit rc.local**:
+   ```bash
+   sudo nano /etc/rc.local
+   ```
 
-1. **Idle State**: All LEDs are solid ON, system waits for card tap
-2. **Card Tap**: User taps card on payment gateway
-3. **Price Sent**: System automatically sends item price ($2.00) to payment gateway
-4. **Payment Approval**: 
-   - If approved: LEDs start flashing, buttons become active
-   - If rejected: LEDs turn off, session ends after timeout
-5. **Item Selection**: User presses button (1-5) to select perfume
-6. **Dispensing**: 
-   - Selected relay activates for 3 seconds
-   - Corresponding LED turns ON (others OFF)
-   - Vend command sent to payment gateway
-7. **Session End**: After dispensing completes, 2-second delay, then session ends
+2. **Add this line before `exit 0`**:
+   ```bash
+   su - pi -c "cd /home/pi/perfume-dispenser && /usr/bin/python3 perfume_dispenser.py &"
+   ```
 
-## MDB Protocol Commands
+3. **Make sure the file ends with `exit 0`**
 
-The system implements the following MDB commands:
+**Note**: This method is less robust than systemd (no automatic restart on failure, harder to manage).
 
-### Sent to Payment Gateway:
-- `13 00 00 C8 00 01` - Select Amount ($2.00 = 200 cents = 0xC8)
-- `13 02 00 [item]` - Vend Item (item number 1-5)
-- `13 01` - Cancel Vend (on timeout)
-- `13 04` - End Session
+## Method 3: Using crontab @reboot
 
-### Received from Payment Gateway:
-- `10 03` - Card Tap Event
-- `10 05 00 0A` - Payment Approved (with amount)
-- `10 06` - Payment Rejected
-- `10 04` - Timeout
-- `00` or `10 00` - ACK
-- `30 30 20 0d 0a` - Cancel Vend ACK (ASCII "00 \r\n")
+1. **Edit crontab**:
+   ```bash
+   crontab -e
+   ```
 
-## Serial Monitor Output
+2. **Add this line**:
+   ```cron
+   @reboot cd /home/pi/perfume-dispenser && /usr/bin/python3 perfume_dispenser.py
+   ```
 
-The system provides detailed serial debugging at 9600 baud:
+**Note**: This method also doesn't provide automatic restart on failure.
 
+---
+
+## Video Player Service (USB Video Playback)
+
+The video player automatically plays videos from a USB stick in fullscreen, in alphabetical order. It starts on boot, waits for the USB to be connected, and stops immediately if the USB is removed.
+
+### Quick Installation
+
+1. **Navigate to the project directory**:
+   ```bash
+   cd ~/perfume-dispenser
+   ```
+
+2. **Run the installation script**:
+   ```bash
+   sudo ./install-video-player.sh
+   ```
+
+   The script will:
+   - Check for a video player (mpv, omxplayer, or vlc)
+   - Offer to install mpv if none is found
+   - Create and enable the systemd service
+   - Optionally start the service immediately
+
+3. **Prepare your USB stick**:
+   - Create a folder named `video` on the USB stick
+   - Place your video files (.mp4, .avi, .mov, .mkv, etc.) in that folder
+   - Videos will play in **alphabetical order**
+
+### Behavior
+
+- **USB connected**: Detects USB, reads videos from the `video` folder, plays in alphabetical order in fullscreen loop
+- **USB removed**: Stops video immediately (no resume)
+- **USB reconnected**: Service restarts automatically and waits for USB; when connected, plays again
+
+### Manual Installation
+
+1. **Install a video player** (if not already installed):
+   ```bash
+   sudo apt-get update
+   sudo apt-get install mpv
+   ```
+
+2. **Copy the service file**:
+   ```bash
+   sudo cp video-player.service /etc/systemd/system/
+   ```
+
+3. **Edit the service file** to match your setup:
+   ```bash
+   sudo nano /etc/systemd/system/video-player.service
+   ```
+   
+   Update the path in `ExecStart`:
+   ```ini
+   ExecStart=/usr/bin/python3 -u /home/pi/perfume-dispenser/video_player.py
+   ```
+
+4. **Reload systemd and enable the service**:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable video-player.service
+   sudo systemctl start video-player.service
+   ```
+
+### Video Player Service Commands
+
+```bash
+# Check service status
+sudo systemctl status video-player
+
+# Start the service
+sudo systemctl start video-player
+
+# Stop the service
+sudo systemctl stop video-player
+
+# Restart the service
+sudo systemctl restart video-player
+
+# View live logs
+sudo journalctl -u video-player -f
+
+# View recent logs
+sudo journalctl -u video-player -n 50
+
+# Disable autostart
+sudo systemctl disable video-player
 ```
-Setup complete - System ready!
-Waiting for card tap...
-RX: 10 03 03 E8 | State: WAIT_CARD_TAP
-Card tap detected!
-TX: 13 00 00 C8 00 01 | State: WAIT_APPROVAL
-TX: Select Amount $2.00
-RX: 10 05 00 C8 | State: WAIT_APPROVAL
-Payment approved: $2.00
-Waiting for item selection (timeout: 55 seconds)...
-TX: 13 02 00 01 | State: WAIT_ITEM
-TX: Vend Item 1
-Dispenser 1 activated - Vending in progress
-```
+
+### Video Player Troubleshooting
+
+- **No video player found**: Install mpv with `sudo apt-get install mpv`
+- **USB not detected**: Ensure the USB has a `video` folder with video files; check mount point with `ls /media/pi/`
+- **Videos not playing**: Verify video format is supported (.mp4, .avi, .mov, .mkv, etc.)
+- **Display issues**: Ensure `DISPLAY=:0` is set if using a desktop environment
+
+---
 
 ## Troubleshooting
 
-### LEDs Not Working
-- Check LED polarity (anode to pin via resistor, cathode to GND)
-- Verify resistor values (220Ω recommended)
-- Check pin connections match code
+### Service won't start
 
-### Buttons Not Responding
-- Verify buttons are wired correctly (pin to button, button to GND)
-- Check that buttons are only active after payment approval
-- Use serial monitor to see button state changes
+1. **Check service status**:
+   ```bash
+   sudo systemctl status perfume-dispenser
+   ```
 
-### Payment Gateway Not Communicating
-- Verify RX/TX connections (A5=RX, A4=TX)
-- Check baud rate is 9600
-- Ensure common GND between Arduino and payment gateway
-- Monitor serial output for MDB frame errors
+2. **Check logs**:
+   ```bash
+   sudo journalctl -u perfume-dispenser -n 50
+   ```
 
-### Relays Not Activating
-- Check relay module power supply
-- Verify relay control pins are correct
-- Test relays independently
-- Check relay duration (3 seconds default)
+3. **Common issues**:
+   - **Permission errors**: Make sure the user in the service file has access to GPIO
+   - **Path errors**: Verify the paths in the service file are correct
+   - **Python not found**: Check that Python 3 is at `/usr/bin/python3`
+   - **Dependencies missing**: Run `pip3 install -r requirements.txt`
 
-## Safety Notes
+### Service starts but stops immediately
 
-- Ensure proper power supply for relay modules
-- Use appropriate relay ratings for your dispenser pumps/valves
-- Keep payment gateway connections secure
-- Test thoroughly before deployment
+1. **Check if it's a permission issue**:
+   ```bash
+   sudo journalctl -u perfume-dispenser -n 50
+   ```
 
-## License
+2. **Try running manually** to see the error:
+   ```bash
+   python3 perfume_dispenser.py
+   ```
 
-This project is provided as-is for educational and commercial use.
+3. **Check GPIO permissions**:
+   ```bash
+   groups  # Should include 'gpio' group
+   ```
 
-## Author
+### Service doesn't start on boot
 
-Perfume Dispenser System - Arduino Implementation
+1. **Verify service is enabled**:
+   ```bash
+   sudo systemctl is-enabled perfume-dispenser
+   ```
+   Should output: `enabled`
 
+2. **Check if service file exists**:
+   ```bash
+   ls -l /etc/systemd/system/perfume-dispenser.service
+   ```
+
+3. **Reload systemd**:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable perfume-dispenser
+   ```
+
+## Testing Autostart
+
+To test if autostart works:
+
+1. **Enable the service** (if not already):
+   ```bash
+   sudo systemctl enable perfume-dispenser
+   ```
+
+2. **Reboot the Raspberry Pi**:
+   ```bash
+   sudo reboot
+   ```
+
+3. **After reboot, check if service is running**:
+   ```bash
+   sudo systemctl status perfume-dispenser
+   ```
+
+   Should show: `Active: active (running)`
+
+## Recommended: systemd Service
+
+The systemd service method is recommended because it:
+- ✅ Automatically restarts if the program crashes
+- ✅ Provides better logging with `journalctl`
+- ✅ Easy to start/stop/restart
+- ✅ Starts after network is ready
+- ✅ Standard Linux service management
+
+## Service Configuration Details
+
+The service file (`perfume-dispenser.service`) includes:
+
+- **Restart=always**: Automatically restarts if the program crashes
+- **RestartSec=10**: Waits 10 seconds before restarting
+- **After=network.target**: Starts after network is available
+- **StandardOutput=journal**: Logs output to systemd journal
+- **StandardError=journal**: Logs errors to systemd journal
+
+You can modify these settings in `/etc/systemd/system/perfume-dispenser.service` if needed.
