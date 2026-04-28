@@ -100,14 +100,21 @@ class PerfumeDispenser:
         self.button_states = [GPIO.HIGH] * config.NUM_BUTTONS
         self.button_last_state = [GPIO.HIGH] * config.NUM_BUTTONS
         self.button_last_change_time = [0] * config.NUM_BUTTONS
-        
+
+        # Test mode (bypasses Nayax - hold button 1 + button 5 for 20s to toggle)
+        self.test_mode = False
+        self.test_mode_buttons_active = False   # True while combo is currently held
+        self.test_mode_hold_start = 0.0         # ms timestamp when combo hold started
+        self.test_mode_last_flash = 0.0         # ms timestamp for test-mode LED flash
+        self.test_mode_flash_state = False
+
         # Threading
         self.running = True
         self.serial_thread = None
         
         # Initial startup logs - flush immediately for systemd
         print("=" * 50, flush=True)
-        print("Perfume Dispenser System - Starting Up", flush=True)
+        print(f"Perfume Dispenser System v{config.VERSION} - Starting Up", flush=True)
         print("=" * 50, flush=True)
         print(f"Relay pins: {self.relay_pins}", flush=True)
         print(f"LED pins: {self.led_pins}", flush=True)
@@ -178,9 +185,13 @@ class PerfumeDispenser:
         self.relay_active[index] = False
         
         print(f"Dispenser {index + 1} deactivated")
-        
-        # Wait for delay before ending session
-        if self.mdb_state == MDBState.STATE_VENDING:
+
+        if self.test_mode:
+            # In test mode there is no Nayax session to end - just reset dispense flag
+            self.dispensing = False
+            print("[TEST MODE] Ready for next dispense", flush=True)
+        elif self.mdb_state == MDBState.STATE_VENDING:
+            # Normal mode: wait for delay before ending session
             self.dispensing = False
             self.waiting_to_end_session = True
             self.dispense_complete_time = time.time() * 1000
@@ -544,6 +555,71 @@ class PerfumeDispenser:
             
             self.button_last_state[i] = current_state
     
+    # -------------------------------------------------------------------------
+    # Test mode helpers
+    # -------------------------------------------------------------------------
+
+    TEST_MODE_HOLD_MS = config.TEST_MODE_HOLD_MS
+    # Combo: button index 0 (button 1) + button index 4 (button 5)
+    TEST_MODE_BTN_A = 0
+    TEST_MODE_BTN_B = 4
+
+    def _update_test_mode_combo(self, current_time: float):
+        """Detect button-1 + button-5 held for 20 s and toggle test mode."""
+        btn_a = self.button_states[self.TEST_MODE_BTN_A] == GPIO.LOW
+        btn_b = self.button_states[self.TEST_MODE_BTN_B] == GPIO.LOW
+
+        if btn_a and btn_b:
+            if not self.test_mode_buttons_active:
+                self.test_mode_buttons_active = True
+                self.test_mode_hold_start = current_time
+                mode_label = "EXIT" if self.test_mode else "ENTER"
+                print(f"[TEST MODE] Hold button 1 + button 5 for 20 s to {mode_label} test mode...",
+                      flush=True)
+            elif current_time - self.test_mode_hold_start >= self.TEST_MODE_HOLD_MS:
+                # Trigger toggle once, then require release before detecting again
+                self.test_mode_buttons_active = False
+                self._toggle_test_mode()
+        else:
+            self.test_mode_buttons_active = False
+
+    def _toggle_test_mode(self):
+        """Enter or exit test mode with visual LED feedback."""
+        self.test_mode = not self.test_mode
+        label = "ENTERING" if self.test_mode else "EXITING"
+
+        print(f"\n{'=' * 50}", flush=True)
+        print(f"[TEST MODE] {label} TEST MODE  (v{config.VERSION})", flush=True)
+        if self.test_mode:
+            print("[TEST MODE] Nayax bypassed - press any button to dispense directly", flush=True)
+        else:
+            print("[TEST MODE] Returning to normal operation", flush=True)
+        print(f"{'=' * 50}\n", flush=True)
+
+        # 5 rapid flashes on all LEDs as confirmation
+        for _ in range(5):
+            for pin in self.led_pins:
+                GPIO.output(pin, GPIO.HIGH)
+            time.sleep(0.1)
+            for pin in self.led_pins:
+                GPIO.output(pin, GPIO.LOW)
+            time.sleep(0.1)
+
+        # Reset relay / dispenser state when toggling
+        self.dispensing = False
+        for i in range(config.NUM_RELAYS):
+            if self.relay_active[i]:
+                GPIO.output(self.relay_pins[i], GPIO.LOW)
+                GPIO.output(self.led_pins[i], GPIO.LOW)
+                self.relay_active[i] = False
+
+        if not self.test_mode:
+            # Back to normal idle - wait for card tap
+            self.mdb_state = MDBState.STATE_WAIT_CARD_TAP
+            self.led_flashing_enabled = False
+            self.card_tapped = False
+            self.waiting_to_end_session = False
+
     def run(self):
         """Main loop"""
         # Startup animation
@@ -571,47 +647,75 @@ class PerfumeDispenser:
                         self.send_select_amount(config.ITEM_PRICE)
                         self.card_tapped = False
                 
-                # Handle LED flashing
-                if (self.led_flashing_enabled and not self.dispensing and 
-                    self.mdb_state == MDBState.STATE_WAIT_ITEM):
+                # ---- LED control ----
+                if self.test_mode and not self.dispensing:
+                    # Distinct fast blink (4 Hz) while idle in test mode
+                    if current_time - self.test_mode_last_flash >= 250:
+                        self.test_mode_last_flash = current_time
+                        self.test_mode_flash_state = not self.test_mode_flash_state
+                        for pin in self.led_pins:
+                            GPIO.output(pin, GPIO.HIGH if self.test_mode_flash_state else GPIO.LOW)
+                elif (self.led_flashing_enabled and not self.dispensing and
+                      self.mdb_state == MDBState.STATE_WAIT_ITEM):
                     if current_time - self.last_flash_time >= config.FLASH_INTERVAL:
                         self.led_flash_state = not self.led_flash_state
                         self.last_flash_time = current_time
-                        
-                        # Toggle all LEDs
                         for pin in self.led_pins:
                             GPIO.output(pin, GPIO.HIGH if self.led_flash_state else GPIO.LOW)
-                # If in IDLE or WAIT_CARD_TAP state, turn all LEDs ON
-                elif (self.mdb_state in (MDBState.STATE_IDLE, MDBState.STATE_WAIT_CARD_TAP) and 
-                      not self.dispensing):
+                elif (self.mdb_state in (MDBState.STATE_IDLE, MDBState.STATE_WAIT_CARD_TAP) and
+                      not self.dispensing and not self.test_mode):
                     for pin in self.led_pins:
                         GPIO.output(pin, GPIO.HIGH)
-                # If LEDs should be off
-                elif (not self.led_flashing_enabled and not self.dispensing and 
+                elif (not self.led_flashing_enabled and not self.dispensing and not self.test_mode and
                       self.mdb_state not in (MDBState.STATE_IDLE, MDBState.STATE_WAIT_CARD_TAP)):
                     for pin in self.led_pins:
                         GPIO.output(pin, GPIO.LOW)
-                
+
                 # Update button states
                 self.update_buttons()
-                
+
+                # Check for test-mode combo (button 1 + button 5 held 20 s)
+                self._update_test_mode_combo(current_time)
+
                 # Handle button presses
                 pressed_count = 0
                 pressed_index = -1
-                
+
                 for i in range(config.NUM_BUTTONS):
                     if self.button_states[i] == GPIO.LOW:  # Button is pressed (active LOW)
                         pressed_count += 1
                         pressed_index = i
-                
-                # Only process if exactly one button is pressed, payment approved, and not dispensing
-                if (pressed_count == 1 and pressed_index >= 0 and not self.dispensing and 
-                    self.mdb_state == MDBState.STATE_WAIT_ITEM):
-                    # Check for button press (falling edge)
-                    if (self.button_states[pressed_index] == GPIO.LOW and 
-                        self.button_last_state[pressed_index] == GPIO.HIGH):
-                        item_number = pressed_index + 1
-                        self.send_vend_item(item_number, pressed_index)
+
+                if self.test_mode:
+                    # ---- Test mode: direct dispense, bypass Nayax ----
+                    # Skip if the exit combo (both buttons) is being held
+                    combo_held = (
+                        self.button_states[self.TEST_MODE_BTN_A] == GPIO.LOW and
+                        self.button_states[self.TEST_MODE_BTN_B] == GPIO.LOW
+                    )
+                    if (pressed_count == 1 and pressed_index >= 0 and
+                            not self.dispensing and not combo_held):
+                        if (self.button_states[pressed_index] == GPIO.LOW and
+                                self.button_last_state[pressed_index] == GPIO.HIGH):
+                            print(f"[TEST MODE] Direct dispense - button {pressed_index + 1}",
+                                  flush=True)
+                            # Activate dispenser directly
+                            if not self.relay_active[pressed_index]:
+                                self.dispensing = True
+                                for pin in self.led_pins:
+                                    GPIO.output(pin, GPIO.LOW)
+                                GPIO.output(self.led_pins[pressed_index], GPIO.HIGH)
+                                GPIO.output(self.relay_pins[pressed_index], GPIO.HIGH)
+                                self.relay_active[pressed_index] = True
+                                self.relay_start_time[pressed_index] = current_time
+                else:
+                    # ---- Normal mode: require Nayax payment approval ----
+                    if (pressed_count == 1 and pressed_index >= 0 and not self.dispensing and
+                            self.mdb_state == MDBState.STATE_WAIT_ITEM):
+                        if (self.button_states[pressed_index] == GPIO.LOW and
+                                self.button_last_state[pressed_index] == GPIO.HIGH):
+                            item_number = pressed_index + 1
+                            self.send_vend_item(item_number, pressed_index)
                 
                 # Check if any relay needs to be turned off after duration
                 for i in range(config.NUM_RELAYS):
@@ -690,7 +794,7 @@ class PerfumeDispenser:
 def main():
     """Main entry point"""
     print("=" * 50, flush=True)
-    print("Perfume Dispenser System - Main Entry Point", flush=True)
+    print(f"Perfume Dispenser System v{config.VERSION} - Main Entry Point", flush=True)
     print("=" * 50, flush=True)
     
     try:

@@ -3,6 +3,13 @@ Configuration file for Raspberry Pi Perfume Dispenser
 All pin assignments are configurable here
 """
 
+# Software version
+VERSION = "1.1.0"
+
+# Test mode configuration
+# Hold button 1 + button 5 simultaneously for this duration to toggle test mode
+TEST_MODE_HOLD_MS = 20_000  # 20 seconds in milliseconds
+
 # GPIO Pin Configuration (BCM numbering)
 # Use BCM pin numbers (not physical pin numbers)
 # Example: GPIO 18 = Physical pin 12
@@ -22,7 +29,7 @@ BUTTON_PINS = [13, 21, 16, 7, 24]  # GPIO pins for 5 buttons
 # TTL Serial Configuration for Payment Gateway (MDB Protocol)
 # Raspberry Pi UART pins: GPIO 14 (TX), GPIO 15 (RX)
 # For USB-to-TTL adapter, specify the device path 
-TTL_SERIAL_PORT = '/dev/serial0'  # Default UART on Raspberry Pi
+TTL_SERIAL_PORT = '/dev/ttyUSB0'  # Default UART on Raspberry Pi
 TTL_BAUD_RATE = 9600  # MDB protocol baud rate
 
 # System Constants
