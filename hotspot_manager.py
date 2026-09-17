@@ -11,6 +11,7 @@ Requirements (run service as root, or grant sudoers rights for):
 
 import os
 import re
+import shutil
 import tempfile
 import threading
 import subprocess
@@ -24,6 +25,51 @@ import config
 _CON_NAME  = "perfume-hotspot"
 _DNSMASQ   = "/etc/NetworkManager/dnsmasq-shared.d/captive.conf"
 _WEB_PORT  = 8080  # non-root port; iptables redirects 80 → 8080
+
+# Resolve full paths for privileged binaries that may not be in systemd's PATH
+_SEARCH_DIRS = ["/usr/sbin", "/sbin", "/usr/bin", "/bin"]
+
+def _which(name: str) -> str:
+    """Find a binary in the standard sbin/bin locations; raise if not found."""
+    path = shutil.which(name, path=":".join(_SEARCH_DIRS))
+    if path:
+        return path
+    raise FileNotFoundError(
+        f"'{name}' not found in {_SEARCH_DIRS}. "
+        f"Install it or add its directory to the service PATH."
+    )
+
+# Resolved once at import time so errors surface immediately on startup
+_IPTABLES = _which("iptables")
+_NMCLI    = _which("nmcli")
+
+
+def _wifi_iface() -> str:
+    """
+    Return the name of the first Wi-Fi device known to NetworkManager.
+    Falls back to 'wlan0' if detection fails.
+    Cached after first call so nmcli is only invoked once.
+    """
+    if _wifi_iface._cache:
+        return _wifi_iface._cache[0]
+    try:
+        r = subprocess.run(
+            [_NMCLI, "-t", "-f", "DEVICE,TYPE", "device"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in r.stdout.splitlines():
+            parts = line.split(":")
+            if len(parts) >= 2 and parts[1].strip() == "wifi":
+                iface = parts[0].strip()
+                print(f"[hotspot] Detected Wi-Fi interface: {iface}", flush=True)
+                _wifi_iface._cache.append(iface)
+                return iface
+    except Exception as exc:
+        print(f"[hotspot] Interface detection failed ({exc}), falling back to wlan0", flush=True)
+    _wifi_iface._cache.append("wlan0")
+    return "wlan0"
+
+_wifi_iface._cache: list = []
 
 # ── Portal HTML template ─────────────────────────────────────────────────────
 
@@ -195,27 +241,28 @@ class HotspotManager:
             f.write(f"address=/#/{config.HOTSPOT_IP}\n")
 
     def _bring_up(self):
-        _run(["nmcli", "con", "delete", _CON_NAME])     # remove stale entry if any
+        _run([_NMCLI, "con", "delete", _CON_NAME])     # remove stale entry if any
+        iface = _wifi_iface()
         pw = getattr(config, "HOTSPOT_PASSWORD", "")
         for cmd in [
-            ["nmcli", "con", "add", "type", "wifi", "ifname", "wlan0",
+            [_NMCLI, "con", "add", "type", "wifi", "ifname", iface,
              "con-name", _CON_NAME, "autoconnect", "no", "ssid", config.HOTSPOT_SSID],
-            ["nmcli", "con", "modify", _CON_NAME,
+            [_NMCLI, "con", "modify", _CON_NAME,
              "802-11-wireless.mode", "ap", "802-11-wireless.band", "bg",
              "ipv4.method", "shared", "ipv4.addresses", f"{config.HOTSPOT_IP}/24"],
             *(
-                [["nmcli", "con", "modify", _CON_NAME,
+                [[_NMCLI, "con", "modify", _CON_NAME,
                   "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", pw]]
                 if pw else []
             ),
-            ["nmcli", "con", "up", _CON_NAME],
+            [_NMCLI, "con", "up", _CON_NAME],
         ]:
             _run(cmd, check=True)
 
     def _iptables(self, action: str):
         """Add (-A) or remove (-D) the port-80 → port-8080 redirect rule."""
-        _run(["iptables", "-t", "nat", f"-{action}", "PREROUTING",
-              "-i", "wlan0", "-p", "tcp", "--dport", "80",
+        _run([_IPTABLES, "-t", "nat", f"-{action}", "PREROUTING",
+              "-i", _wifi_iface(), "-p", "tcp", "--dport", "80",
               "-j", "REDIRECT", "--to-port", str(_WEB_PORT)])
 
     def _start_server(self):
@@ -232,7 +279,7 @@ class HotspotManager:
         self._stop_server()
         self._iptables("D")
         self._net_cleanup()
-        _run(["nmcli", "device", "connect", "wlan0"])   # best-effort reconnect
+        _run([_NMCLI, "device", "connect", _wifi_iface()])   # best-effort reconnect
         self._active = False
         print("[hotspot] Disabled — normal networking restored", flush=True)
 
@@ -243,8 +290,8 @@ class HotspotManager:
             self._sthread = None
 
     def _net_cleanup(self):
-        _run(["nmcli", "con", "down",   _CON_NAME])
-        _run(["nmcli", "con", "delete", _CON_NAME])
+        _run([_NMCLI, "con", "down",   _CON_NAME])
+        _run([_NMCLI, "con", "delete", _CON_NAME])
         try:
             os.remove(_DNSMASQ)
         except FileNotFoundError:
