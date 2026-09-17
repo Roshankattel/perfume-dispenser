@@ -12,6 +12,7 @@ import sys
 from enum import Enum
 from typing import List, Optional
 import config
+from hotspot_manager import HotspotManager
 
 # Force unbuffered output for systemd logging
 sys.stdout = sys.__stdout__
@@ -107,6 +108,11 @@ class PerfumeDispenser:
         self.test_mode_hold_start = 0.0         # ms timestamp when combo hold started
         self.test_mode_last_flash = 0.0         # ms timestamp for test-mode LED flash
         self.test_mode_flash_state = False
+
+        # Hotspot combo state (button 1 + button 3, indices 0 and 2)
+        self._hotspot_combo_active = False
+        self._hotspot_hold_start   = 0.0
+        self.hotspot = HotspotManager()
 
         # Threading
         self.running = True
@@ -564,6 +570,10 @@ class PerfumeDispenser:
     TEST_MODE_BTN_A = 0
     TEST_MODE_BTN_B = 4
 
+    # Hotspot combo: button index 0 (button 1) + button index 2 (button 3)
+    HOTSPOT_BTN_A = 0
+    HOTSPOT_BTN_B = 2
+
     def _update_test_mode_combo(self, current_time: float):
         """Detect button-1 + button-5 held for 20 s and toggle test mode."""
         btn_a = self.button_states[self.TEST_MODE_BTN_A] == GPIO.LOW
@@ -619,6 +629,30 @@ class PerfumeDispenser:
             self.led_flashing_enabled = False
             self.card_tapped = False
             self.waiting_to_end_session = False
+
+    # -------------------------------------------------------------------------
+    # Hotspot combo helpers
+    # -------------------------------------------------------------------------
+
+    def _update_hotspot_combo(self, current_time: float):
+        """Detect button 1 + button 3 held for HOTSPOT_HOLD_MS → toggle hotspot."""
+        a = self.button_states[self.HOTSPOT_BTN_A] == GPIO.LOW
+        b = self.button_states[self.HOTSPOT_BTN_B] == GPIO.LOW
+
+        if a and b:
+            if not self._hotspot_combo_active:
+                self._hotspot_combo_active = True
+                self._hotspot_hold_start   = current_time
+                action = "disable" if self.hotspot.is_active else "enable"
+                print(f"[hotspot] Hold buttons 1+3 for "
+                      f"{config.HOTSPOT_HOLD_MS / 1000:.0f}s to {action}…", flush=True)
+            elif current_time - self._hotspot_hold_start >= config.HOTSPOT_HOLD_MS:
+                # Trigger once; require full release before another long-press
+                self._hotspot_combo_active = False
+                threading.Thread(target=self.hotspot.toggle,
+                                 daemon=True, name="hotspot-toggle").start()
+        else:
+            self._hotspot_combo_active = False
 
     def run(self):
         """Main loop"""
@@ -677,6 +711,9 @@ class PerfumeDispenser:
                 # Check for test-mode combo (button 1 + button 5 held 20 s)
                 self._update_test_mode_combo(current_time)
 
+                # Check for hotspot combo (button 1 + button 3 held HOTSPOT_HOLD_MS)
+                self._update_hotspot_combo(current_time)
+
                 # Handle button presses
                 pressed_count = 0
                 pressed_index = -1
@@ -694,7 +731,8 @@ class PerfumeDispenser:
                         self.button_states[self.TEST_MODE_BTN_B] == GPIO.LOW
                     )
                     if (pressed_count == 1 and pressed_index >= 0 and
-                            not self.dispensing and not combo_held):
+                            not self.dispensing and not combo_held and
+                            not self._hotspot_combo_active):
                         if (self.button_states[pressed_index] == GPIO.LOW and
                                 self.button_last_state[pressed_index] == GPIO.HIGH):
                             print(f"[TEST MODE] Direct dispense - button {pressed_index + 1}",
@@ -711,7 +749,8 @@ class PerfumeDispenser:
                 else:
                     # ---- Normal mode: require Nayax payment approval ----
                     if (pressed_count == 1 and pressed_index >= 0 and not self.dispensing and
-                            self.mdb_state == MDBState.STATE_WAIT_ITEM):
+                            self.mdb_state == MDBState.STATE_WAIT_ITEM and
+                            not self._hotspot_combo_active):
                         if (self.button_states[pressed_index] == GPIO.LOW and
                                 self.button_last_state[pressed_index] == GPIO.HIGH):
                             item_number = pressed_index + 1
@@ -775,6 +814,10 @@ class PerfumeDispenser:
         """Cleanup GPIO and serial on exit"""
         print("Cleaning up...")
         self.running = False
+
+        # Shut down hotspot if active before restoring GPIO
+        if self.hotspot.is_active:
+            self.hotspot.disable()
         
         # Turn off all relays and LEDs
         for pin in self.relay_pins:

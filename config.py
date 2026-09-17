@@ -43,6 +43,30 @@ CARD_TAP_DELAY = 500  # Delay in ms before sending price after card tap
 ASCII_TIMEOUT = 100  # 100ms timeout to process ASCII string
 BUTTON_DEBOUNCE_INTERVAL = 25  # 25ms debounce interval for buttons
 
+# Hotspot / captive portal (hold button 1 + button 3 to toggle)
+HOTSPOT_HOLD_MS = 20_000        # ms to hold B1+B3 before hotspot toggles
+
+# Derive SSID from the Raspberry Pi's unique serial number so each unit
+# advertises a distinct network.  Falls back to "Dispenser-unknown" on
+# non-Pi hardware (development machines, unit tests, etc.).
+def _get_pi_serial() -> str:
+    try:
+        with open("/proc/cpuinfo") as _f:
+            for _line in _f:
+                if _line.startswith("Serial"):
+                    # e.g. "Serial          : 10000000a7c7e8a5"
+                    # Take the last 8 hex digits to keep the SSID short.
+                    return _line.split(":")[1].strip()[-8:]
+    except OSError:
+        pass
+    return "unknown"
+
+HOTSPOT_SSID = f"Dispenser-{_get_pi_serial()}"  # e.g. "Dispenser-a7c7e8a5"
+HOTSPOT_PASSWORD = "12345678" # WPA2 password (minimum 8 characters)
+HOTSPOT_IP = "192.168.4.1"      # Gateway / portal IP on the hotspot network
+RELAY_DURATION_MIN = 100        # ms — minimum accepted RELAY_DURATION via portal
+RELAY_DURATION_MAX = 10_000     # ms — maximum accepted RELAY_DURATION via portal
+
 # Number of components
 NUM_RELAYS = len(RELAY_PINS)
 NUM_LEDS = len(LED_PINS)
