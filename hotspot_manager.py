@@ -6,7 +6,7 @@ RELAY_DURATION. Imported by perfume_dispenser.py; all network operations run
 in a background thread so the main button loop is never blocked.
 
 Requirements (run service as root, or grant sudoers rights for):
-  nmcli, iptables, writes to /etc/NetworkManager/dnsmasq-shared.d/
+  nmcli, nft (or iptables), writes to /etc/NetworkManager/dnsmasq-shared.d/
 """
 
 import os
@@ -24,24 +24,20 @@ import config
 
 _CON_NAME  = "perfume-hotspot"
 _DNSMASQ   = "/etc/NetworkManager/dnsmasq-shared.d/captive.conf"
-_WEB_PORT  = 8080  # non-root port; iptables redirects 80 → 8080
+_WEB_PORT   = 8080  # non-root port; nft/iptables redirects 80 → 8080
+_NFT_TABLE  = "perfume_hotspot"
 
 # Resolve full paths for privileged binaries that may not be in systemd's PATH
 _SEARCH_DIRS = ["/usr/sbin", "/sbin", "/usr/bin", "/bin"]
 
-def _which(name: str) -> str:
-    """Find a binary in the standard sbin/bin locations; raise if not found."""
-    path = shutil.which(name, path=":".join(_SEARCH_DIRS))
-    if path:
-        return path
-    raise FileNotFoundError(
-        f"'{name}' not found in {_SEARCH_DIRS}. "
-        f"Install it or add its directory to the service PATH."
-    )
+def _find(name: str) -> str | None:
+    """Find a binary in the standard sbin/bin locations, or None if missing."""
+    return shutil.which(name, path=":".join(_SEARCH_DIRS))
 
-# Resolved once at import time so errors surface immediately on startup
-_IPTABLES = _which("iptables")
-_NMCLI    = _which("nmcli")
+# Prefer nftables (Raspberry Pi OS / Debian default). iptables is a fallback.
+_NMCLI    = _find("nmcli")
+_NFT      = _find("nft")
+_IPTABLES = _find("iptables")
 
 
 def _wifi_iface() -> str:
@@ -52,6 +48,9 @@ def _wifi_iface() -> str:
     """
     if _wifi_iface._cache:
         return _wifi_iface._cache[0]
+    if not _NMCLI:
+        _wifi_iface._cache.append("wlan0")
+        return "wlan0"
     try:
         r = subprocess.run(
             [_NMCLI, "-t", "-f", "DEVICE,TYPE", "device"],
@@ -223,9 +222,13 @@ class HotspotManager:
     def _enable(self):
         print("[hotspot] Enabling hotspot…", flush=True)
         try:
+            if not _NMCLI:
+                raise RuntimeError("nmcli not found; install NetworkManager")
+            if not _NFT and not _IPTABLES:
+                raise RuntimeError("nft or iptables not found; install nftables")
             self._write_dns()           # write before NM starts its dnsmasq
             self._bring_up()            # nmcli: create + start AP connection
-            self._iptables("A")         # redirect port 80 → 8080
+            self._port_redirect(True)   # redirect port 80 → 8080
             self._start_server()        # start HTTP portal on port 8080
             self._active = True
             print(f"[hotspot] Active — SSID: {config.HOTSPOT_SSID!r} | "
@@ -259,10 +262,32 @@ class HotspotManager:
         ]:
             _run(cmd, check=True)
 
-    def _iptables(self, action: str):
-        """Add (-A) or remove (-D) the port-80 → port-8080 redirect rule."""
+    def _port_redirect(self, enable: bool):
+        """Add or remove the port-80 → port-8080 redirect (nft, else iptables)."""
+        iface = _wifi_iface()
+        if _NFT:
+            if enable:
+                _run([_NFT, "delete", "table", "ip", _NFT_TABLE])
+                rules = (
+                    f"table ip {_NFT_TABLE} {{\n"
+                    f"    chain prerouting {{\n"
+                    f"        type nat hook prerouting priority dstnat;\n"
+                    f"        iifname \"{iface}\" tcp dport 80 redirect to :{_WEB_PORT}\n"
+                    f"    }}\n"
+                    f"}}\n"
+                )
+                r = subprocess.run(
+                    [_NFT, "-f", "-"], input=rules,
+                    capture_output=True, text=True,
+                )
+                if r.returncode:
+                    raise RuntimeError(f"nft: {r.stderr.strip()}")
+            else:
+                _run([_NFT, "delete", "table", "ip", _NFT_TABLE])
+            return
+        action = "A" if enable else "D"
         _run([_IPTABLES, "-t", "nat", f"-{action}", "PREROUTING",
-              "-i", _wifi_iface(), "-p", "tcp", "--dport", "80",
+              "-i", iface, "-p", "tcp", "--dport", "80",
               "-j", "REDIRECT", "--to-port", str(_WEB_PORT)])
 
     def _start_server(self):
@@ -277,9 +302,10 @@ class HotspotManager:
     def _disable(self):
         print("[hotspot] Disabling hotspot…", flush=True)
         self._stop_server()
-        self._iptables("D")
+        self._port_redirect(False)
         self._net_cleanup()
-        _run([_NMCLI, "device", "connect", _wifi_iface()])   # best-effort reconnect
+        if _NMCLI:
+            _run([_NMCLI, "device", "connect", _wifi_iface()])   # best-effort reconnect
         self._active = False
         print("[hotspot] Disabled — normal networking restored", flush=True)
 
@@ -290,8 +316,9 @@ class HotspotManager:
             self._sthread = None
 
     def _net_cleanup(self):
-        _run([_NMCLI, "con", "down",   _CON_NAME])
-        _run([_NMCLI, "con", "delete", _CON_NAME])
+        if _NMCLI:
+            _run([_NMCLI, "con", "down",   _CON_NAME])
+            _run([_NMCLI, "con", "delete", _CON_NAME])
         try:
             os.remove(_DNSMASQ)
         except FileNotFoundError:

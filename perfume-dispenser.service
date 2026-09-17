@@ -5,7 +5,7 @@ Wants=NetworkManager.service
 
 [Service]
 Type=simple
-# Root is required for nmcli AP mode, iptables, and /etc/NetworkManager writes.
+# Root is required for nmcli AP mode, nft/iptables, and /etc/NetworkManager writes.
 # GPIO and serial access work fine as root on Raspberry Pi OS.
 User=root
 WorkingDirectory=/home/pi/perfume-dispenser
