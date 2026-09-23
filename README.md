@@ -319,3 +319,16 @@ The service file (`perfume-dispenser.service`) includes:
 - **StandardError=journal**: Logs errors to systemd journal
 
 You can modify these settings in `/etc/systemd/system/perfume-dispenser.service` if needed.
+
+---
+
+## Wi-Fi Hotspot QR Code
+
+The dispenser hotspot SSID is `Dispenser-` plus the last 8 hex digits of the Pi serial. The WPA2 password is the value in `config.py` (`12345678`). Generate a QR code from a development machine:
+
+```bash
+pip3 install -r wifi-qr/requirements.txt
+python3 wifi-qr/generate_wifi_qr.py --serial 10000000abcdef12
+```
+
+That serial produces SSID `Dispenser-abcdef12` and writes `wifi-qr-10000000abcdef12.png`. Use `--output` for a custom filename. The password is printed only with `--show-credentials`. See `wifi-qr/README.md` for details.

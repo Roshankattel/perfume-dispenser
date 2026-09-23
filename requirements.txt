@@ -1,2 +1,5 @@
 RPi.GPIO>=0.7.1
 pyserial>=3.5
+# Wi-Fi QR generator (wifi-qr/): pip3 install -r wifi-qr/requirements.txt
+segno>=1.6.1
+pypng>=0.20220715.0
