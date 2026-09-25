@@ -331,4 +331,4 @@ pip3 install -r wifi-qr/requirements.txt
 python3 wifi-qr/generate_wifi_qr.py --serial 10000000abcdef12
 ```
 
-That serial produces SSID `Dispenser-abcdef12` and writes `wifi-qr-10000000abcdef12.png`. Use `--output` for a custom filename. The password is printed only with `--show-credentials`. See `wifi-qr/README.md` for details.
+On Windows, run `wifi-qr\build_windows.bat` to build `generate_wifi_qr.exe`. Double-click the exe, type the Pi serial in the text box, and click Generate. The PNG is saved next to the exe; the window stays open for the next serial. See `wifi-qr/README.md` for details.

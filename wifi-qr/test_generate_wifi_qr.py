@@ -12,11 +12,15 @@ from unittest.mock import patch
 from generate_wifi_qr import (
     HOTSPOT_PASSWORD,
     InvalidSerialError,
+    application_dir,
+    default_output_path,
     escape_wifi_field,
+    generate_for_serial,
     main,
     normalize_serial,
     password_from_serial,
     payload_for_serial,
+    resolve_output_path,
     ssid_from_serial,
     wifi_qr_payload,
 )
@@ -105,6 +109,48 @@ class SerialValidationTests(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         self.assertIn("Password: 12345678", stdout.getvalue())
+
+    def test_opens_gui_when_serial_omitted(self):
+        with patch("generate_wifi_qr.run_gui", return_value=0) as gui:
+            code = main([])
+        self.assertEqual(code, 0)
+        gui.assert_called_once()
+
+    def test_generate_for_serial_writes_default_png(self):
+        with patch("generate_wifi_qr.write_qr_png") as write:
+            result = generate_for_serial("10000000ABCDEF12")
+        self.assertEqual(result.serial, "10000000abcdef12")
+        self.assertEqual(result.ssid, "Dispenser-abcdef12")
+        self.assertEqual(result.path.name, "wifi-qr-10000000abcdef12.png")
+        write.assert_called_once()
+
+    def test_generate_for_serial_rejects_invalid(self):
+        with self.assertRaises(InvalidSerialError):
+            generate_for_serial("not-a-serial")
+
+    def test_default_png_goes_next_to_program(self):
+        folder = Path("/apps/dispenser-qr")
+        with patch("generate_wifi_qr.application_dir", return_value=folder):
+            self.assertEqual(
+                default_output_path("10000000abcdef12"),
+                folder / "wifi-qr-10000000abcdef12.png",
+            )
+            self.assertEqual(
+                resolve_output_path("10000000abcdef12", None),
+                folder / "wifi-qr-10000000abcdef12.png",
+            )
+            self.assertEqual(
+                resolve_output_path("10000000abcdef12", "custom.png"),
+                folder / "custom.png",
+            )
+
+    def test_application_dir_uses_exe_when_frozen(self):
+        exe = Path("/apps/generate_wifi_qr.exe")
+        with (
+            patch.object(sys, "frozen", True, create=True),
+            patch.object(sys, "executable", str(exe)),
+        ):
+            self.assertEqual(application_dir(), exe.resolve().parent)
 
 
 class SsidGenerationTests(unittest.TestCase):

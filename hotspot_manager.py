@@ -183,15 +183,13 @@ class HotspotManager:
 
     Usage in the main application:
         hotspot = HotspotManager()
-        # When the combo is detected:
-        threading.Thread(target=hotspot.toggle, daemon=True).start()
+        # Entering / leaving test mode:
+        threading.Thread(target=hotspot.enable, daemon=True).start()
+        threading.Thread(target=hotspot.disable, daemon=True).start()
         # On shutdown:
         if hotspot.is_active:
             hotspot.disable()
     """
-
-    # Button indices (0-based) for the combo — button 1 and button 3
-    BTNS = (0, 2)
 
     def __init__(self):
         self._active = False
@@ -205,17 +203,22 @@ class HotspotManager:
 
     # ---- public API ----
 
-    def toggle(self):
-        """Toggle the hotspot on or off (blocking — call from a background thread)."""
-        if self._active:
-            self._disable()
-        else:
+    def enable(self):
+        """Unconditionally enable the hotspot (idempotent; call from a background thread)."""
+        if not self._active:
             self._enable()
 
     def disable(self):
         """Unconditionally disable the hotspot (idempotent)."""
         if self._active:
             self._disable()
+
+    def toggle(self):
+        """Toggle the hotspot on or off (blocking — call from a background thread)."""
+        if self._active:
+            self._disable()
+        else:
+            self._enable()
 
     # ---- private: enable path ----
 
