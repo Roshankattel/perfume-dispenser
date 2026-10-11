@@ -4,6 +4,7 @@ USB Video Player for Raspberry Pi
 Automatically detects USB stick and plays videos in alphabetical order in fullscreen loop
 """
 
+import json
 import os
 import sys
 import time
@@ -16,10 +17,14 @@ sys.stderr = sys.__stderr__
 
 # Configuration
 USB_MOUNT_POINTS = ['/media/pi', '/media', '/mnt/usb', '/mnt']
+AUTO_MOUNT_ROOT = '/media/usb-video'
 VIDEO_FOLDER_NAME = 'video'
 VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv', '.m4v', '.wmv', '.flv', '.webm']
 CHECK_INTERVAL = 5       # Seconds between USB-present checks
 MAX_WAIT_TIME = 300      # Max seconds to wait for USB on startup
+
+# Set when a stick is found, so removal can be detected without touching a dead mount.
+current_usb = {'mount': None, 'device': None}
 
 # Watchdog — how long to let the player run before assuming it is frozen.
 # Set to total playlist duration + this buffer. Restart is silent and seamless.
@@ -27,43 +32,177 @@ WATCHDOG_BUFFER_SECONDS = 120   # 2-minute grace period on top of expected durat
 DEFAULT_VIDEO_DURATION  = 600   # Fallback if ffprobe is unavailable (10 min)
 
 
-def find_usb_mount_point():
-    """Find the mount point of the USB stick"""
-    for mount_base in USB_MOUNT_POINTS:
-        if os.path.exists(mount_base):
-            # Check all subdirectories (USB devices are usually mounted as subdirectories)
-            try:
-                for item in os.listdir(mount_base):
-                    mount_path = os.path.join(mount_base, item)
-                    if os.path.isdir(mount_path) and os.access(mount_path, os.R_OK):
-                        # Check if it's likely a USB device (has video folder or is a mount point)
-                        video_path = os.path.join(mount_path, VIDEO_FOLDER_NAME)
-                        if os.path.exists(video_path) and os.path.isdir(video_path):
-                            return mount_path
-                        # Also check if it's a mount point (not a system directory)
-                        if os.path.ismount(mount_path):
-                            return mount_path
-            except PermissionError:
-                continue
-    
-    # Also check /dev/disk/by-label and /dev/disk/by-uuid
+def run_as_root(args):
+    """Run mount or umount. Use sudo when the service is not root."""
+    if os.geteuid() != 0:
+        args = ['sudo', '-n', *args]
+    return subprocess.run(args, capture_output=True, text=True, timeout=20)
+
+
+def has_video_folder(mount_path):
+    video_path = os.path.join(mount_path, VIDEO_FOLDER_NAME)
+    return os.path.isdir(video_path)
+
+
+def findmnt_target(device):
     try:
-        # Check common USB device paths
-        for device in glob.glob('/dev/sd*1'):
-            # Try to find mount point using findmnt or mount command
-            try:
-                result = subprocess.run(['findmnt', '-n', '-o', 'TARGET', device], 
-                                      capture_output=True, text=True, timeout=2)
-                if result.returncode == 0 and result.stdout.strip():
-                    mount_path = result.stdout.strip()
-                    video_path = os.path.join(mount_path, VIDEO_FOLDER_NAME)
-                    if os.path.exists(video_path) and os.path.isdir(video_path):
-                        return mount_path
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                continue
-    except Exception:
+        result = subprocess.run(
+            ['findmnt', '-n', '-o', 'TARGET', device],
+            capture_output=True, text=True, timeout=2
+        )
+        target = result.stdout.strip()
+        if result.returncode == 0 and target:
+            return target
+    except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
-    
+    return None
+
+
+def device_path(node):
+    path = node.get('path') or ''
+    if path.startswith('/dev/'):
+        return path
+    name = node.get('name') or ''
+    if name.startswith('/dev/'):
+        return name
+    if name:
+        return '/dev/' + name
+    return ''
+
+
+def usb_partitions():
+    """Partitions on USB disks. The Pi SD card (mmcblk) is ignored."""
+    try:
+        result = subprocess.run(
+            ['lsblk', '-J', '-o', 'NAME,PATH,TYPE,TRAN,MOUNTPOINT'],
+            capture_output=True, text=True, timeout=5
+        )
+        devices = json.loads(result.stdout).get('blockdevices', [])
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError, OSError):
+        devices = []
+
+    found = []
+    for disk in devices:
+        path = device_path(disk)
+        tran = disk.get('tran') or ''
+        if disk.get('type') != 'disk':
+            continue
+        if path.startswith('/dev/mmcblk'):
+            continue
+        if tran != 'usb' and not path.startswith('/dev/sd'):
+            continue
+        children = [child for child in (disk.get('children') or []) if child.get('type') == 'part']
+        for child in children:
+            child_path = device_path(child)
+            if child_path:
+                child = dict(child)
+                child['path'] = child_path
+                found.append(child)
+        # A filesystem directly on the disk, with no partition table.
+        if not children and path:
+            disk = dict(disk)
+            disk['path'] = path
+            found.append(disk)
+
+    if found:
+        return found
+
+    return [{'path': device, 'mountpoint': None} for device in sorted(glob.glob('/dev/sd*[0-9]'))]
+
+
+def mount_partition(device):
+    """Mount an unmounted USB partition under /media/usb-video."""
+    existing = findmnt_target(device)
+    if existing:
+        return existing
+
+    mount_path = os.path.join(AUTO_MOUNT_ROOT, os.path.basename(device))
+    if not os.path.isdir(mount_path):
+        try:
+            if os.geteuid() == 0:
+                os.makedirs(mount_path, exist_ok=True)
+            else:
+                made = run_as_root(['mkdir', '-p', mount_path])
+                if made.returncode != 0:
+                    detail = (made.stderr or made.stdout).strip()
+                    print(f"Could not create {mount_path}: {detail}", flush=True)
+                    return None
+        except (OSError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            print(f"Could not create {mount_path}: {exc}", flush=True)
+            return None
+
+    if os.path.ismount(mount_path):
+        return mount_path
+
+    print(f"Mounting {device} at {mount_path}", flush=True)
+    try:
+        result = run_as_root(['mount', device, mount_path])
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        print(f"Could not mount {device}: {exc}", flush=True)
+        return None
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        print(f"Could not mount {device}: {detail}", flush=True)
+        return None
+    return mount_path
+
+
+def remember_usb(mount_path, device):
+    current_usb['mount'] = mount_path
+    current_usb['device'] = device
+    return mount_path
+
+
+def find_usb_mount_point():
+    """Find a USB stick that contains a video folder, mounting it if needed."""
+    for part in usb_partitions():
+        device = part.get('path')
+        if not device:
+            continue
+        mount_path = part.get('mountpoint') or findmnt_target(device)
+        if not mount_path:
+            mount_path = mount_partition(device)
+        if mount_path and has_video_folder(mount_path):
+            return remember_usb(mount_path, device)
+
+    # Desktop automount uses /media/<user>/<label>, two levels under /media.
+    for mount_base in USB_MOUNT_POINTS:
+        if not os.path.isdir(mount_base):
+            continue
+        try:
+            candidates = [os.path.join(mount_base, item) for item in os.listdir(mount_base)]
+        except PermissionError:
+            continue
+        deeper = []
+        for mount_path in candidates:
+            if has_video_folder(mount_path):
+                return remember_usb(mount_path, findmnt_target_source(mount_path))
+            if os.path.isdir(mount_path):
+                try:
+                    deeper.extend(
+                        os.path.join(mount_path, item) for item in os.listdir(mount_path)
+                    )
+                except PermissionError:
+                    continue
+        for mount_path in deeper:
+            if has_video_folder(mount_path):
+                return remember_usb(mount_path, findmnt_target_source(mount_path))
+
+    return None
+
+
+def findmnt_target_source(mount_path):
+    try:
+        result = subprocess.run(
+            ['findmnt', '-n', '-o', 'SOURCE', mount_path],
+            capture_output=True, text=True, timeout=2
+        )
+        source = result.stdout.strip()
+        if result.returncode == 0 and source.startswith('/dev/'):
+            return source
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
     return None
 
 
@@ -86,11 +225,22 @@ def find_video_files(usb_path):
         video_files.extend(glob.glob(pattern))
         pattern = os.path.join(video_folder, f'*{ext.upper()}')
         video_files.extend(glob.glob(pattern))
-    
-    # Sort alphabetically
-    video_files.sort(key=str.lower)
-    
-    return video_files
+
+    # FAT volumes from macOS include AppleDouble files such as ._clip.mp4.
+    unique = []
+    seen = set()
+    for path in video_files:
+        name = os.path.basename(path)
+        if name.startswith('._') or name.startswith('.'):
+            continue
+        key = os.path.normcase(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+
+    unique.sort(key=str.lower)
+    return unique
 
 
 def wait_for_usb():
@@ -180,8 +330,14 @@ def run_with_usb_monitor(proc, usb_path, watchdog_timeout=None):
         if ret is not None:
             return ret
 
-        if not os.path.exists(usb_path):
+        device = current_usb.get('device')
+        if (device and not os.path.exists(device)) or not os.path.isdir(usb_path):
             print("USB removed - stopping video immediately.", flush=True)
+            if usb_path.startswith(AUTO_MOUNT_ROOT + os.sep):
+                try:
+                    run_as_root(['umount', '-l', usb_path])
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    pass
             proc.terminate()
             try:
                 proc.wait(timeout=5)

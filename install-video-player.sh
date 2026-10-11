@@ -35,6 +35,22 @@ fi
 chmod +x "$SCRIPT_DIR/video_player.py"
 echo "Made video_player.py executable"
 
+# The player mounts the USB stick itself. Allow only that, without a password.
+SERVICE_USER=${SUDO_USER:-$(awk -F= '/^User=/{print $2; exit}' "$SERVICE_FILE")}
+if [ -z "$SERVICE_USER" ] || [ "$SERVICE_USER" = "root" ]; then
+    SERVICE_USER=pi
+fi
+sed -i "s|^User=.*|User=$SERVICE_USER|" "$SERVICE_FILE"
+SUDOERS_FILE="/etc/sudoers.d/video-player-mount"
+echo "$SERVICE_USER ALL=(root) NOPASSWD: /usr/bin/mount, /usr/bin/umount, /bin/mkdir" > "$SUDOERS_FILE"
+chmod 440 "$SUDOERS_FILE"
+if ! visudo -cf "$SUDOERS_FILE" >/dev/null; then
+    echo "Error: sudoers file for USB mounting is invalid"
+    rm -f "$SUDOERS_FILE"
+    exit 1
+fi
+echo "Allowed $SERVICE_USER to mount USB sticks"
+
 # Check if video player is installed
 echo ""
 echo "Checking for video player..."

@@ -5,6 +5,8 @@ This guide explains how to set up the Perfume Dispenser System and the USB Video
 - **Perfume Dispenser**: Payment and dispensing system (Methods 1–3 below)
 - **Video Player**: USB video playback in fullscreen (see Video Player Service section)
 
+For a Raspberry Pi OS Lite (no desktop) install, with the package versions used on the controller, follow [docs/raspberry-pi-lite-installation.md](docs/raspberry-pi-lite-installation.md).
+
 ## Method 1: Using systemd Service (Recommended)
 
 The easiest way is to use the provided installation script.
